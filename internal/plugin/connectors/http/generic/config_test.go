@@ -16,6 +16,9 @@ func sampleConfigYAML() []byte {
     Authorization: 'Basic {{ printf "%s:%s" .username .password | base64 }}'
     Name-With-Dashes: '{{ .username }}'
     SimpleConcatenation: '{{ .username }} - {{ .password }}'
+  queryParams:
+    Key: '{{ .key | base64 }}'
+    NameWithSpaces: '{{ .name }}'
   forceSSL: true
   authenticateURLsMatching:
     - ^http
@@ -42,10 +45,12 @@ func Test_newConfig(t *testing.T) {
 			return
 		}
 
-		headers, err := cfg.renderedHeaders(map[string][]byte{
-			"username": []byte("Jonah"),
-			"password": []byte("secret"),
-		})
+		headers, err := render(
+			cfg.Headers,
+			map[string][]byte{
+				"username": []byte("Jonah"),
+				"password": []byte("secret"),
+			})
 
 		assert.NoError(t, err)
 		if err != nil {
@@ -58,6 +63,32 @@ func Test_newConfig(t *testing.T) {
 
 		// Assert against value calculated with independent base64 encoder.
 		assert.Equal(t, "Basic Sm9uYWg6c2VjcmV0", headers["Authorization"])
+	})
+
+	t.Run("creates expected query params", func(t *testing.T) {
+		cfg, err := sampleConfig()
+		assert.NoError(t, err)
+		if err != nil {
+			return
+		}
+
+		params, err := render(
+			cfg.QueryParams,
+			map[string][]byte{
+				"key": []byte("someKey"),
+				"name": []byte("Foo Bar"),
+			})
+
+		assert.NoError(t, err)
+		if err != nil {
+			return
+		}
+
+		// A simple test case
+		assert.Equal(t, "Foo Bar", params["NameWithSpaces"])
+
+		// Assert against value calculated with independent base64 encoder.
+		assert.Equal(t, "c29tZUtleQ==", params["Key"])
 	})
 }
 

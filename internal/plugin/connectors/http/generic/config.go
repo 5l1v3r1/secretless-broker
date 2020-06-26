@@ -14,6 +14,7 @@ import (
 type config struct {
 	CredentialPatterns map[string]*regexp.Regexp
 	Headers            map[string]*template.Template
+	QueryParams 	   map[string]*template.Template
 	ForceSSL           bool
 }
 
@@ -34,13 +35,14 @@ func (c *config) validate(credsByID connector.CredentialValuesByID) error {
 	return nil
 }
 
-// renderedHeaders returns the config's header templates filled in with the
+// Render returns the config's `config` section templates filled in with the
 // given credentialValues.
-func (c *config) renderedHeaders(
+func render(
+	template map[string]*template.Template,
 	credsByID connector.CredentialValuesByID,
 ) (map[string]string, error) {
 	errs := validation.Errors{}
-	headers := make(map[string]string)
+	args := make(map[string]string)
 
 	// Creds must be strings to work with templates
 	credStringsByID := make(map[string]string)
@@ -48,20 +50,20 @@ func (c *config) renderedHeaders(
 		credStringsByID[credName] = string(credBytes)
 	}
 
-	for header, tmpl := range c.Headers {
+	for arg, tmpl := range template {
 		builder := &strings.Builder{}
 		if err := tmpl.Execute(builder, credStringsByID); err != nil {
-			errs[header] = fmt.Errorf("couldn't render template: %q", err)
+			errs[arg] = fmt.Errorf("couldn't render template: %q", err)
 			continue
 		}
-		headers[header] = builder.String()
+		args[arg] = builder.String()
 	}
 
 	if err := errs.Filter(); err != nil {
 		return nil, err
 	}
 
-	return headers, nil
+	return args, nil
 }
 
 // newConfig takes a ConfigYAML, validates it, and converts it into a
@@ -71,7 +73,6 @@ func newConfig(cfgYAML *ConfigYAML) (*config, error) {
 
 	cfg := &config{
 		CredentialPatterns: make(map[string]*regexp.Regexp),
-		Headers:            make(map[string]*template.Template),
 		ForceSSL:           cfgYAML.ForceSSL,
 	}
 
@@ -85,23 +86,31 @@ func newConfig(cfgYAML *ConfigYAML) (*config, error) {
 		cfg.CredentialPatterns[cred] = re
 	}
 
-	// Validate and save header template strings
-	for header, tmplStr := range cfgYAML.Headers {
-		tmpl := newHeaderTemplate(header)
-		// Ignore pointer to receiver returned by Parse(): it's just "tmpl".
-		_, err := tmpl.Parse(tmplStr)
-		if err != nil {
-			errs[header] = fmt.Errorf("invalid header template: %q", err)
-			continue
-		}
-		cfg.Headers[header] = tmpl
-	}
+	cfg.Headers, errs = validateAndSaveTemplateString(cfgYAML.Headers, errs)
+	cfg.QueryParams, errs = validateAndSaveTemplateString(cfgYAML.QueryParams, errs)
 
 	if err := errs.Filter(); err != nil {
 		return nil, err
 	}
 
 	return cfg, nil
+}
+
+func validateAndSaveTemplateString(templates map[string]string,
+	errs validation.Errors) (map[string]*template.Template, validation.Errors) {
+	parsedTemplates := make(map[string]*template.Template)
+	// Validate and save template strings
+	for tmplName, tmplStr := range templates {
+		tmpl := newHTTPTemplate(tmplName)
+		// Ignore pointer to receiver returned by Parse(): it's just "tmpl".
+		_, err := tmpl.Parse(tmplStr)
+		if err != nil {
+			errs[tmplName] = fmt.Errorf("invalid query param template: %q", err)
+			continue
+		}
+		parsedTemplates[tmplName] = tmpl
+	}
+	return parsedTemplates, errs
 }
 
 // templateFuncs is a map holding the custom functions available for use within
@@ -113,6 +122,6 @@ var templateFuncs = template.FuncMap{
 	},
 }
 
-func newHeaderTemplate(name string) *template.Template {
+func newHTTPTemplate(name string) *template.Template {
 	return template.New(name).Funcs(templateFuncs)
 }
